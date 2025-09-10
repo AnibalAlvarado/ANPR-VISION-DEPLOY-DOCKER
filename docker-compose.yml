@@ -1,0 +1,116 @@
+version: "3.9"
+
+networks:
+  anpr-net: {}
+
+volumes:
+  pg_data: {}
+  mssql_data: {}
+  mysql_data: {}
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: anpr_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: AdminANPR_2025!
+      POSTGRES_DB: anprvision
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks:
+      - anpr-net
+
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: anpr_sqlserver
+    environment:
+      ACCEPT_EULA: "Y"
+      SA_PASSWORD: Admin123!
+    ports:
+      - "1436:1433"
+    volumes:
+      - mssql_data:/var/opt/mssql
+    networks:
+      - anpr-net
+
+  mysql:
+    image: mysql:8
+    container_name: anpr_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: AdminANPR_2025!
+      MYSQL_DATABASE: anprvision
+      MYSQL_USER: anpr
+      MYSQL_PASSWORD: AdminANPR_2025!
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - anpr-net
+
+  backend:
+    build:
+      context: ./ANPR-VISION-BACK/Api      # ← raíz donde existe la carpeta Web/
+      dockerfile: Web/Dockerfile           # ← el Dockerfile está dentro de Web/
+    container_name: backend_web
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://0.0.0.0:8080
+      DB_PROVIDER: PostgreSql
+      ConnectionStrings__PostgreSql: Host=postgres;Port=5432;Database=anprvision;Username=postgres;Password=AdminANPR_2025!
+      ConnectionStrings__SqlServer: Server=sqlserver,1433;Database=anprvision;User Id=sa;Password=Admin123!;TrustServerCertificate=True;
+      ConnectionStrings__MySql: Server=mysql;Port=3306;Database=anprvision;User=anpr;Password=AdminANPR_2025!
+    expose:
+      - "8080"
+    depends_on:
+      - postgres
+      - sqlserver
+      - mysql
+    networks:
+      - anpr-net
+
+  frontend:
+    build:
+      context: ./ANPR-VISION-FRONT/angular  # ← carpeta donde está package.json
+      dockerfile: Dockerfile.two
+    container_name: angular_frontend
+    expose:
+      - "80"
+    networks:
+      - anpr-net
+
+  nginx-proxy:
+    build:
+      context: ./nginx/proxy
+    container_name: anpr_nginx_proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/proxy/conf.d:/etc/nginx/conf.d
+      - ./nginx/proxy/certs:/etc/nginx/certs
+      - ./letsencrypt:/etc/letsencrypt
+      - ./nginx/html:/var/www/certbot
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - anpr-net
+
+  duckdns:
+    image: curlimages/curl:8.8.0
+    container_name: duckdns_updater
+    environment:
+      DUCKDNS_DOMAIN: anprvision      # sin .duckdns.org
+      DUCKDNS_TOKEN: 1bd102a6-7b20-420a-9efc-497117805ed6
+    command: >
+      sh -c "while true; do
+        curl -s 'https://www.duckdns.org/update?domains=${DUCKDNS_DOMAIN}&token=${DUCKDNS_TOKEN}&ip=';
+        echo; sleep 300;
+      done"
+    restart: unless-stopped
+    networks:
+      - anpr-net
